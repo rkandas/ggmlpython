@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ggml.h"
+#include "ggml/ggml.h"
 
 #include <map>
 #include <fstream>

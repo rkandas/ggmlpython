@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "common-ggml.h"
+#include "gpt_bindings.h"
 
 #include <cassert>
 #include <cmath>
@@ -71,6 +72,11 @@ struct stablelm_model {
     struct ggml_context * ctx;
     std::map<std::string, struct ggml_tensor *> tensors;
 };
+
+std::string run_inference(gpt_params params, bool loadmodel);
+stablelm_model model;
+gpt_vocab vocab;
+std::string result;
 
 // load the model's weights from a file
 bool stablelm_model_load(const std::string & fname, stablelm_model & model, gpt_vocab & vocab) {
@@ -627,6 +633,24 @@ bool stablelm_eval(
     return true;
 }
 
+bool load_model_internal(const char* model_path) {
+     int64_t t_load_us = 0;
+    // load the model
+    {
+        const int64_t t_start_us = ggml_time_us();
+
+        if (!stablelm_model_load(model_path, model, vocab)) {
+            fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, model_path);
+            return false;
+        }
+
+        t_load_us = ggml_time_us() - t_start_us;
+    }
+    
+    printf("%s:     load time = %8.2f ms\n", __func__, t_load_us/1000.0f);
+    return true;
+}
+
 int main(int argc, char ** argv) {
     const int64_t t_main_start_us = ggml_time_us();
 
@@ -644,67 +668,64 @@ int main(int argc, char ** argv) {
     printf("%s: seed = %d\n", __func__, params.seed);
 
     std::mt19937 rng(params.seed);
-    if (params.prompt.empty()) {
-        if( !isatty(STDIN_FILENO) ){
-            std::string line;
-            while( std::getline(std::cin, line) ){
-                params.prompt = params.prompt + "\n" + line;
-            }
-        } else {
-            params.prompt = gpt_random_prompt(rng);
-        }
+    std::string result = run_inference(params, true);
+    printf("%s\n", result.c_str());
+    return 0;
+}
+
+std::string run_inference(gpt_params params, bool loadmodel) {
+    const int64_t t_main_start_us = ggml_time_us();
+    result = "";
+    if (params.seed < 0) {
+            params.seed = time(NULL);
     }
 
-    int64_t t_load_us = 0;
+    //printf("%s: seed = %d\n", __func__, params.seed);
 
-    gpt_vocab vocab;
-    stablelm_model model;
+    std::mt19937 rng(params.seed);
 
-    // load the model
-    {
-        const int64_t t_start_us = ggml_time_us();
-
-        if (!stablelm_model_load(params.model, model, vocab)) {
-            fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
-            return 1;
-        }
-
-        t_load_us = ggml_time_us() - t_start_us;
-    }
-
+    if(loadmodel)
+        load_model_internal(params.model.c_str());
+    
     int n_past = 0;
 
     int64_t t_sample_us  = 0;
     int64_t t_predict_us = 0;
 
     std::vector<float> logits;
-
+    //fprintf(stderr, "%s: prompt received '%s'\n", __func__, params.prompt.c_str());
     // tokenize the prompt
-    std::vector<gpt_vocab::id> embd_inp = ::gpt_tokenize(vocab, params.prompt);
+    std::vector<gpt_vocab::id> embd_inp = ::gpt_tokenize(vocab, params.prompt.c_str());
 
     params.n_predict = std::min(params.n_predict, model.hparams.n_ctx - (int) embd_inp.size());
 
-    printf("%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
+    /* printf("%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
     for (int i = 0; i < embd_inp.size(); i++) {
         printf("%s: token[%d] = %6d, %s\n", __func__, i, embd_inp[i], vocab.id_to_token.at(embd_inp[i]).c_str());
-    }
-    printf("\n");
+    } */
 
     std::vector<gpt_vocab::id> embd;
 
     // determine the required inference memory per token:
     size_t mem_per_token = 0;
-    stablelm_eval(model, params.n_threads, 0, { 0, 1, 2, 3 }, logits, mem_per_token);
+    std::vector<int> temp_vector;
+    temp_vector.push_back(0);
+    temp_vector.push_back(1);
+    temp_vector.push_back(2);
+    temp_vector.push_back(3);
+
+
+    stablelm_eval(model, params.n_threads, 0, temp_vector, logits, mem_per_token);
 
     for (int i = embd.size(); i < embd_inp.size() + params.n_predict; i++) {
         // predict
         if (embd.size() > 0) {
             const int64_t t_start_us = ggml_time_us();
-
             if (!stablelm_eval(model, params.n_threads, n_past, embd, logits, mem_per_token)) {
-                printf("Failed to predict\n");
-                return 1;
+                //printf("Failed to predict\n");
+                return "";
             }
+
 
             t_predict_us += ggml_time_us() - t_start_us;
         }
@@ -719,14 +740,14 @@ int main(int argc, char ** argv) {
             const float temp  = params.temp;
 
             const int n_vocab = model.hparams.n_vocab;
-
+            //printf("%s: n_vocab = %d", __func__, n_vocab);
             gpt_vocab::id id = 0;
 
             {
                 const int64_t t_start_sample_us = ggml_time_us();
 
                 id = gpt_sample_top_k_top_p(vocab, logits.data() + (logits.size() - n_vocab), top_k, top_p, temp, rng);
-
+                //printf("%s: %d", __func__,id);
                 t_sample_us += ggml_time_us() - t_start_sample_us;
             }
 
@@ -745,7 +766,8 @@ int main(int argc, char ** argv) {
 
         // display text
         for (auto id : embd) {
-            printf("%s", vocab.id_to_token[id].c_str());
+            //printf("%s", vocab.id_to_token[id].c_str());
+            result += vocab.id_to_token[id];
         }
         fflush(stdout);
 
@@ -759,15 +781,39 @@ int main(int argc, char ** argv) {
     {
         const int64_t t_main_end_us = ggml_time_us();
 
-        printf("\n\n");
+        /* printf("\n\n");
         printf("%s: mem per token = %8zu bytes\n", __func__, mem_per_token);
-        printf("%s:     load time = %8.2f ms\n", __func__, t_load_us/1000.0f);
         printf("%s:   sample time = %8.2f ms\n", __func__, t_sample_us/1000.0f);
         printf("%s:  predict time = %8.2f ms / %.2f ms per token\n", __func__, t_predict_us/1000.0f, t_predict_us/1000.0f/n_past);
-        printf("%s:    total time = %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us)/1000.0f);
+        printf("%s:    total time = %8.2f ms\n", __func__, (t_main_end_us - t_main_start_us)/1000.0f); */
     }
 
-    ggml_free(model.ctx);
+    if(loadmodel)
+        ggml_free(model.ctx);
+    return result;
+}
 
-    return 0;
+std::string generated_text;
+
+extern "C" {
+
+    bool load_model(const char* model_path) {
+        return ::load_model_internal(model_path);
+    }
+
+    const char* generate_text(const char* prompt, int seed, int n_predict, int n_threads, int top_k, int top_p, float temp) {
+        gpt_params params;
+        params.prompt = prompt;
+       // printf("Received Prompt   : %s\n", params.prompt.c_str());
+        params.seed = seed;
+        //printf("Received Seed   : %d\n", params.seed);
+        params.n_predict = n_predict;
+        params.n_threads = n_threads;
+        params.top_k = top_k;
+        params.top_p = top_p;
+        params.temp = temp;
+        generated_text = ::run_inference(params,false);
+        return generated_text.c_str();
+    }
+
 }
