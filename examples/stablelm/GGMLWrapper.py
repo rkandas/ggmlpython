@@ -1,5 +1,7 @@
 import ctypes
 from typing import Tuple
+from langchain import PromptTemplate
+import sys
 
 class GGMLWrapper:
     def __init__(self):
@@ -21,14 +23,32 @@ class GGMLWrapper:
         return self.lib.load_model(model_path_buffer)
 
 gpt = GGMLWrapper()
-if gpt.load_model('../../models/models--databricks--dolly-v2-3b/ggml-model-q4_3.bin'):
-    result = gpt.generate_text('The meaning of life is ', -1, 64, 8, 40, 0.9, 0.8)
-    print(result.decode('utf-8' ))
-    result = gpt.generate_text('### Instruction: What is Python?\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
-    print(result.decode('utf-8' ))
-    result = gpt.generate_text('### Instruction: Translate this to Japanese: All is well!\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
-    print(result.decode('utf-8' ))
-    result = gpt.generate_text('### Instruction: Tell me a joke.\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
-    print(result.decode('utf-8' ))
+# template = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+# ### Instruction:
+# {instruction}
+
+# ### Response:
+# """
+template = """Question:{instruction}
+Answer:"""
+promptTemplate = PromptTemplate(template=template, input_variables=["instruction"])
+
+if gpt.load_model('../../models/models--lambdalabs--pythia-2.8b-deduped-synthetic-instruct/ggml-pythia-3b-lambda-q4_3.bin'):
+    while True:
+        print("Enter instruction:")
+        instruction = sys.stdin.readlines()
+        instruction_text = ' '.join(instruction)
+        print("Thinking ...")
+        result = gpt.generate_text(promptTemplate.format(instruction=instruction_text), -1, 128, 8, 50, 1.0, 0.75)
+        print(result.decode('utf-8' ))
+    # result = gpt.generate_text('The meaning of life is ', -1, 64, 8, 40, 0.9, 0.8)
+    # print(result.decode('utf-8' ))
+    # result = gpt.generate_text('### Instruction: What is Python?\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
+    # print(result.decode('utf-8' ))
+    # result = gpt.generate_text('### Instruction: Translate this to Japanese: All is well!\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
+    # print(result.decode('utf-8' ))
+    # result = gpt.generate_text('### Instruction: Tell me a joke.\n\n### Response:\n', -1, 64, 8, 40, 0.9, 0.8)
+    # print(result.decode('utf-8' ))
 else:
     print('Error loading model')
