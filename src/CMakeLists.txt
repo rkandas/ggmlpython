@@ -9,6 +9,7 @@ if (GGML_ALL_WARNINGS)
             -Wcast-qual                     \
             -Wstrict-prototypes             \
             -Wpointer-arith                 \
+            -Wdouble-promotion              \
             -Wno-unused-function            \
         ")
     else()
@@ -210,6 +211,10 @@ if (BUILD_SHARED_LIBS)
 
     target_compile_definitions(${TARGET} PUBLIC
         GGML_SHARED
+        )
+
+    target_compile_definitions(${TARGET} PRIVATE
+        GGML_BUILD
         )
 endif()
 
